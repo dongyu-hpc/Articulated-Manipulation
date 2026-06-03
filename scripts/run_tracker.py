@@ -9,6 +9,8 @@ from pathlib import Path
 from threading import Lock
 import moviepy.editor as mpy
 import plotly.express as px
+import subprocess
+
 
 import cv2
 import numpy as np
@@ -40,6 +42,10 @@ from rsrd.extras.cam_helpers import (
 from rsrd.extras.viser_rsrd import ViserRSRD
 
 torch.set_float32_matmul_precision("high")
+
+# 减小编译开销
+import torch._dynamo
+torch._dynamo.disable()
 
 
 def main(
@@ -226,26 +232,26 @@ def main(
             time.sleep(1/30)
 
 
-# def render_video(
-#     optimizer: RigidGroupOptimizer,
-#     motion_clip: cv2.VideoCapture,
-#     num_frames: int
-# ):
-#     renders = []
-#     # Create a render for the video.
-#     for frame_id in tqdm.trange(0, num_frames):
-#         rgb = get_vid_frame(motion_clip, frame_idx=frame_id)
-#         optimizer.apply_keyframe(frame_id)
-#         with torch.no_grad():
-#             outputs = cast(
-#                 dict[str, torch.Tensor],
-#                 optimizer.dig_model.get_outputs(optimizer.sequence[frame_id].frame.camera)
-#             )
-#         render = (outputs["rgb"].cpu() * 255).numpy().astype(np.uint8)
-#         rgb = cv2.resize(rgb, (render.shape[1], render.shape[0]))
-#         render = (render * 0.8 + rgb * 0.2).astype(np.uint8)
-#         renders.append(render)
-#     return renders
+def render_video(
+    optimizer: RigidGroupOptimizer,
+    motion_clip: cv2.VideoCapture,
+    num_frames: int
+):
+    renders = []
+    # Create a render for the video.
+    for frame_id in tqdm.trange(0, num_frames):
+        rgb = get_vid_frame(motion_clip, frame_idx=frame_id)
+        optimizer.apply_keyframe(frame_id)
+        with torch.no_grad():
+            outputs = cast(
+                dict[str, torch.Tensor],
+                optimizer.dig_model.get_outputs(optimizer.sequence[frame_id].frame.camera)
+            )
+        render = (outputs["rgb"].cpu() * 255).numpy().astype(np.uint8)
+        rgb = cv2.resize(rgb, (render.shape[1], render.shape[0]))
+        render = (render * 0.8 + rgb * 0.2).astype(np.uint8)
+        renders.append(render)
+    return renders
 
 def render_video_streaming(
     optimizer: RigidGroupOptimizer,
@@ -255,7 +261,8 @@ def render_video_streaming(
     fps: int = 30,
 ):
     """Render frames one by one and write directly to video file to avoid memory accumulation."""
-    writer = None
+    tmp_path = Path(str(output_path).replace(".mp4", "_raw.mp4"))
+    video_writer = None
 
     for frame_id in tqdm.trange(0, num_frames):
         rgb = get_vid_frame(motion_clip, frame_idx=frame_id)
@@ -271,19 +278,96 @@ def render_video_streaming(
         del outputs  # 立刻释放 GPU tensor
 
         rgb = cv2.resize(rgb, (render.shape[1], render.shape[0]))
-        render = (render * 0.8 + rgb * 0.2).astype(np.uint8)
+        render = np.clip(render * 0.8 + rgb * 0.2, 0, 255).astype(np.uint8)
 
-        if writer is None:
+        if video_writer is None:
             h, w = render.shape[:2]
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h))
+            video_writer = cv2.VideoWriter(str(tmp_path), fourcc, fps, (w, h))
 
-        # render 是 RGB，cv2 需要 BGR
-        writer.write(cv2.cvtColor(render, cv2.COLOR_RGB2BGR))
+        video_writer.write(cv2.cvtColor(render, cv2.COLOR_RGB2BGR))
         del render
 
-    if writer:
-        writer.release()
+    if video_writer:
+        video_writer.release()
+
+    # 转 libx264 + mac compat
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(tmp_path), "-c:v", "libx264", "-b:v", "5000k", str(output_path)],
+        check=True, capture_output=True,
+    )
+    mac_path = Path(str(output_path).replace(".mp4", "_mac_compat.mp4"))
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(tmp_path), "-c:v", "mpeg4", "-b:v", "5000k", str(mac_path)],
+        check=True, capture_output=True,
+    )
+    tmp_path.unlink()
+
+
+# # But this should _really_ be in the rigid optimizer.
+# def track_and_save_motion(
+#     optimizer: RigidGroupOptimizer,
+#     motion_clip: cv2.VideoCapture,
+#     camera_type: CameraIntr,
+#     camopt_render_path: Path,
+#     frame_opt_path: Path,
+#     track_data_path: Path,
+#     save_hand: bool = False,
+# ):
+#     """Get part poses for each frame in the video, ad save the keyframes to a file."""
+#     camera = get_ns_camera_at_origin(camera_type)
+#     num_frames = int(motion_clip.get(cv2.CAP_PROP_FRAME_COUNT))
+
+#     rgb = get_vid_frame(motion_clip, frame_idx=0)
+#     obs = optimizer.create_observation_from_rgb_and_camera(rgb, camera)
+
+#     # Initialize.
+#     renders = optimizer.initialize_obj_pose(obs, render=True, niter=150, n_seeds=6)
+
+#     # Save the frames.
+#     out_clip = mpy.ImageSequenceClip(renders, fps=30)
+#     out_clip.write_videofile(str(camopt_render_path), codec="libx264",bitrate='5000k')
+#     out_clip.write_videofile(str(camopt_render_path).replace('.mp4','_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
+
+#     # Add each frame, optimize them separately.
+#     renders = []
+#     for frame_id in tqdm.trange(0, num_frames):
+#         try:
+#             rgb = get_vid_frame(motion_clip, frame_idx=frame_id)
+#         except ValueError:
+#             num_frames = frame_id
+#             break
+
+#         obs = optimizer.create_observation_from_rgb_and_camera(rgb, camera)
+#         optimizer.add_observation(obs)
+#         optimizer.fit([frame_id], 50)
+#         if num_frames > 300:
+#             obs.clear_cache() # Clear the cache to save memory (can overflow on very long videos)
+
+#         if save_hand:
+#             optimizer.detect_hands(frame_id)
+    
+#     # Save a pre-smoothing video
+#     renders = render_video(optimizer, motion_clip, num_frames)
+#     out_clip = mpy.ImageSequenceClip(renders, fps=30)
+#     out_clip.write_videofile(str(frame_opt_path).replace(".mp4","_pre_smooth.mp4"), codec="libx264",bitrate='5000k')
+#     out_clip.write_videofile(str(frame_opt_path).replace('.mp4','_pre_smooth_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
+    
+#     # Smooth all frames, together.
+#     logger.info("Performing temporal smoothing...")
+#     optimizer.fit(list(range(num_frames)), 50)
+#     logger.info("Finished temporal smoothing.")
+
+#     # Save part trajectories.
+#     optimizer.save_tracks(track_data_path)
+
+#     renders = render_video(optimizer, motion_clip, num_frames)
+#     # Save the final video
+#     out_clip = mpy.ImageSequenceClip(renders, fps=30)
+#     out_clip.write_videofile(str(frame_opt_path), codec="libx264",bitrate='5000k')
+#     out_clip.write_videofile(str(frame_opt_path).replace('.mp4','_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
+
+
 
 
 # But this should _really_ be in the rigid optimizer.
@@ -296,7 +380,7 @@ def track_and_save_motion(
     track_data_path: Path,
     save_hand: bool = False,
 ):
-    """Get part poses for each frame in the video, ad save the keyframes to a file."""
+    """Get part poses for each frame in the video, and save the keyframes to a file."""
     camera = get_ns_camera_at_origin(camera_type)
     num_frames = int(motion_clip.get(cv2.CAP_PROP_FRAME_COUNT))
 
@@ -306,52 +390,91 @@ def track_and_save_motion(
     # Initialize.
     renders = optimizer.initialize_obj_pose(obs, render=True, niter=150, n_seeds=6)
 
-    # Save the frames.
-    out_clip = mpy.ImageSequenceClip(renders, fps=30)
-    out_clip.write_videofile(str(camopt_render_path), codec="libx264",bitrate='5000k')
-    # out_clip.write_videofile(str(camopt_render_path).replace('.mp4','_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
+    # 流式写 camopt_render，避免帧列表常驻内存
+    tmp_path = Path(str(camopt_render_path).replace(".mp4", "_raw.mp4"))
+    video_writer = None
+    for frame in renders:
+        frame_uint8 = np.clip(frame, 0, 255).astype(np.uint8)
+        if video_writer is None:
+            h, w = frame_uint8.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            video_writer = cv2.VideoWriter(str(tmp_path), fourcc, 30, (w, h))
+        video_writer.write(cv2.cvtColor(frame_uint8, cv2.COLOR_RGB2BGR))
+    if video_writer:
+        video_writer.release()
+    del renders
 
-    # Add each frame, optimize them separately.
-    renders = []
-    for frame_id in tqdm.trange(0, num_frames):
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(tmp_path), "-c:v", "libx264", "-b:v", "5000k", str(camopt_render_path)],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(tmp_path), "-c:v", "mpeg4", "-b:v", "5000k",
+         str(camopt_render_path).replace(".mp4", "_mac_compat.mp4")],
+        check=True, capture_output=True,
+    )
+    tmp_path.unlink()
+
+    # 断点续跑：检查已完成到哪一帧
+    start_frame = 0
+    if track_data_path.exists():
+        try:
+            cached = json.loads(track_data_path.read_text())
+            saved_deltas = torch.tensor(cached["part_deltas"], dtype=torch.float32, device="cuda")
+            saved_T = torch.tensor(cached["T_objreg_objinit"], dtype=torch.float32, device="cuda")
+            optimizer.T_objreg_objinit = saved_T
+            optimizer.part_deltas = torch.nn.Parameter(saved_deltas)
+            # 把 sequence 填充到已保存帧数，让 add_observation 的速度外推逻辑正常工作
+            for fid in range(saved_deltas.shape[0]):
+                frgb = get_vid_frame(motion_clip, frame_idx=fid)
+                fobs = optimizer.create_observation_from_rgb_and_camera(frgb, camera)
+                optimizer.sequence.append(fobs)
+                if num_frames > 300:
+                    fobs.clear_cache()
+            start_frame = saved_deltas.shape[0]
+            logger.info(f"Resuming from frame {start_frame} (loaded from {track_data_path})")
+        except Exception as e:
+            logger.warning(f"Failed to load checkpoint, starting from scratch: {e}")
+            start_frame = 0
+
+    # 逐帧优化，每帧完成后立刻保存，OOM 也不丢进度
+    actual_num_frames = num_frames
+    for frame_id in tqdm.trange(start_frame, num_frames):
         try:
             rgb = get_vid_frame(motion_clip, frame_idx=frame_id)
         except ValueError:
-            num_frames = frame_id
+            actual_num_frames = frame_id
             break
 
         obs = optimizer.create_observation_from_rgb_and_camera(rgb, camera)
         optimizer.add_observation(obs)
         optimizer.fit([frame_id], 50)
-        if num_frames > 50: # lower the threshold
-            obs.clear_cache() # Clear the cache to save memory (can overflow on very long videos)
-
+        if num_frames > 300:
+            obs.clear_cache()
         if save_hand:
             optimizer.detect_hands(frame_id)
-    
-    # Save a pre-smoothing video
-    # renders = render_video(optimizer, motion_clip, num_frames)
-    # out_clip = mpy.ImageSequenceClip(renders, fps=30)
-    # out_clip.write_videofile(str(frame_opt_path).replace(".mp4","_pre_smooth.mp4"), codec="libx264",bitrate='5000k')
-    # render_video_streaming(optimizer, motion_clip, num_frames, frame_opt_path)
-    render_video_streaming(optimizer, motion_clip, num_frames,
-                       Path(str(frame_opt_path).replace(".mp4", "_pre_smooth.mp4")))
-    # out_clip.write_videofile(str(frame_opt_path).replace('.mp4','_pre_smooth_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
-    
-    # Smooth all frames, together.
+
+        # 每帧保存一次，防止 OOM 后丢失进度
+        optimizer.save_tracks(track_data_path)
+
+    num_frames = actual_num_frames
+
+    # pre-smooth 视频（流式）
+    pre_smooth_path = Path(str(frame_opt_path).replace(".mp4", "_pre_smooth.mp4"))
+    render_video_streaming(optimizer, motion_clip, num_frames, pre_smooth_path)
+
+    # 时序平滑
     logger.info("Performing temporal smoothing...")
     optimizer.fit(list(range(num_frames)), 50)
     logger.info("Finished temporal smoothing.")
 
-    # Save part trajectories.
+    # 保存平滑后的最终轨迹（覆盖逐帧保存的版本）
     optimizer.save_tracks(track_data_path)
 
-    # renders = render_video(optimizer, motion_clip, num_frames)
-    # Save the final video
-    # out_clip = mpy.ImageSequenceClip(renders, fps=30)
-    # out_clip.write_videofile(str(frame_opt_path), codec="libx264",bitrate='5000k')
-    # out_clip.write_videofile(str(frame_opt_path).replace('.mp4','_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
+    # 最终视频（流式）
     render_video_streaming(optimizer, motion_clip, num_frames, frame_opt_path)
+
+
 
 
 if __name__ == "__main__":
