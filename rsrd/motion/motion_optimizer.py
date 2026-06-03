@@ -300,6 +300,8 @@ class RigidGroupOptimizer:
                     [this_part_deltas],
                     grad_tensors=[this_part_deltas.grad],
                 )
+                tape.zero()  # 释放 tape 中间状态
+                del tape, loss
             optimizer.step()
             scheduler.step()
 
