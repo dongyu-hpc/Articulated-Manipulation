@@ -271,7 +271,7 @@ def track_and_save_motion(
     # Save the frames.
     out_clip = mpy.ImageSequenceClip(renders, fps=30)
     out_clip.write_videofile(str(camopt_render_path), codec="libx264",bitrate='5000k')
-    out_clip.write_videofile(str(camopt_render_path).replace('.mp4','_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
+    # out_clip.write_videofile(str(camopt_render_path).replace('.mp4','_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
 
     # Add each frame, optimize them separately.
     renders = []
@@ -295,7 +295,7 @@ def track_and_save_motion(
     renders = render_video(optimizer, motion_clip, num_frames)
     out_clip = mpy.ImageSequenceClip(renders, fps=30)
     out_clip.write_videofile(str(frame_opt_path).replace(".mp4","_pre_smooth.mp4"), codec="libx264",bitrate='5000k')
-    out_clip.write_videofile(str(frame_opt_path).replace('.mp4','_pre_smooth_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
+    # out_clip.write_videofile(str(frame_opt_path).replace('.mp4','_pre_smooth_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
     
     # Smooth all frames, together.
     logger.info("Performing temporal smoothing...")
@@ -309,7 +309,7 @@ def track_and_save_motion(
     # Save the final video
     out_clip = mpy.ImageSequenceClip(renders, fps=30)
     out_clip.write_videofile(str(frame_opt_path), codec="libx264",bitrate='5000k')
-    out_clip.write_videofile(str(frame_opt_path).replace('.mp4','_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
+    # out_clip.write_videofile(str(frame_opt_path).replace('.mp4','_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
 
 
 if __name__ == "__main__":

@@ -1,132 +1,105 @@
-<h1 align="left">
-    <img alt="rsrd logo" src="https://robot-see-robot-do.github.io/data/favicon.png" width="auto" height="30" />
-    Robot See Robot Do
-    <img alt="rsrd logo" src="https://robot-see-robot-do.github.io/data/favicon.png" width="auto" height="30" />
-</h1>
+Reproduce:
 
-[Project Page](https://robot-see-robot-do.github.io/), [Paper](https://arxiv.org/abs/2409.18121)
-
-
-## Installation
-Clone this repo with `git clone --recursive https://github.com/kerrj/rsrd`, which will clone submodules into `dependencies/`
-### Outside Dependencies
-First please install PyTorch 2.1.2 in a python 3.10 conda env with cuda version 12.0 (should also work with different torch versions but this is what we've tested). Next, install [nerfstudio](https://github.com/nerfstudio-project/nerfstudio) and [gsplat](https://github.com/nerfstudio-project/gsplat) using the instructions provided in their documentation. We use `nerfstudio` version 1.1.4 and `gsplat` version 1.4.0.
-
-Once these are installed, install [GARField](https://github.com/chungmin99/garfield) (included inside `dependencies/`), which should simply be pip installable except for [cuML](https://docs.rapids.ai/install/), which can be pip installed with 
-`pip install --extra-index-url=https://pypi.nvidia.com cudf-cu12==24.10.* cuml-cu12==24.10.*`
-
-Finally, for robot trajectory optimization, install [JAX](https://jax.readthedocs.io/en/latest/installation.html), with GPU if possible; trajectory remapping optimization heavily relies on batch IK + trajectory solves. Please see [`jaxmp`](https://github.com/chungmin99/jaxmp/tree/main) for installation details.
-
-The system was tested with a RTX 4090, with `jax==0.4.35`, but should work for other versions as well.
-
-### Install RSRD
-Simply `pip install -e .` inside your cloned `rsrd` repo to install. 
-
-### Submodule Dependencies
-Please make sure you `pip` install RSRD before submodules, as it installs some dependencies. There are a number of submodules inside the `dependencies/` folder, which can all be pip installed via
+Network proxy
+```BASH
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+export HTTPS_PROXY=http://127.0.0.1:7890
+export HF_ENDPOINT=https://hf-mirror.com
+git config --global http.proxy http://127.0.0.1:7890
+git config --global https.proxy http://127.0.0.1:7890
+export MAX_JOB=1
 ```
-cd dependencies/ 
-pip install -e dig -e garfield -e raftstereo -e hamer_helper -e jaxls -e jaxmp
-``` 
-### Hand Detection (Optional for 4D-DPM)
-If you would like to run the full pipeline with robot motion planning or visualize hand detections, you need to install [HaMeR](https://github.com/geopavlakos/hamer). Please follow the instructions there for how to do this! (it involves downloading model weights).
 
-### Testing the install
-To catch most install issues, after installation you should be able to run `ns-train garfield -h` and `ns-train dig -h` and see a formatted help output of the two training pipelines.
+Environment
+```BASH
+conda create -n rsrd python=3.10 -y
+conda activate rsrd
 
-## Running 4D-DPM
-We have published data to reproduce the paper results [on our site]([TODO](https://robot-see-robot-do.github.io/)). They consist of a multi-view scan in nerfstudio format, and a `.mp4` video of the input demonstration.
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu132
 
-### Custom data
-To capture your own objects, please first scan an object of interest as described [here](https://docs.nerf.studio/quickstart/custom_dataset.html).
+pip install nerfstudio
+pip install gsplat --no-build-isolation
 
-### Training 4D-DPM
-4D-DPM consists of two overlaid models: a GARField and a dino-embedded gaussian model (which we call DiG)
+cd ~/rsrd
+pip install -e dependencies/garfield
 
-1) *Train GARField* with `ns-train garfield --data <path/to/datasetname>`. This will produce an output config file inside `output/datasetname/garfield/<timestamp>/config.yml`
-2) *Train DiG* with `ns-train dig --data <path/to/data/directory> --pipeline.garfield-ckpt <path/to/config.yml>`, using the output config file from the GARField training.
-3) *Segment the model*: inside the viewer for DiG, you should see the following GUI:
-<img src="assets/dig_gui.png" width="50%" alt="image">
-First we need to segment the model. To do this, click on the "Click" button, then click inside the viewer window to select a point in 3D. Next, click "Crop to Click". You should see a result like this:
-<img src="assets/dig_crop1.png" width="50%" alt="image">
-Next adjust the group level until only the object is segmented, like this:
-<img src="assets/dig_crop2.png" width="50%" alt="image">
-Finally, switch to "Cluster" mode, then click "Cluster Scene". For best results pick a scale such that the fewest parts are segmented, with just the part of interest remaining. You can cluster as many times as you want, the final clusters are saved for use in the motion recovery stage of the pipeline.
-<img src="assets/dig_cluster.png" width="50%" alt="image">
+pip install \
+  --extra-index-url=https://pypi.nvidia.com \
+  cudf-cu12==24.10.* \
+  cuml-cu12==24.10.*
 
+pip install -U "jax[cuda13]"
 
-### Reconstructing Video Motion
-After the 4D-DPM is completed, the script `scripts/run_tracker.py` executes the motion reconstruction from a video. To see a full list of options run `python scripts/run_tracker.py -h`:
+pip install git+https://github.com/chungmin99/jaxmp.git --ignore-requires-python
+
+cd ~/rsrd
+pip install -e .
+
+cd dependencies/
+pip install -e dig -e raftstereo -e hamer_helper -e jaxls
+
+pip install torchtyping==0.1.5
+pip install "setuptools==75.8.2" --force-reinstall
+pip install git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch --no-build-isolation
 ```
-╭─ options ─────────────────────────────────────────────────────────────╮
-│ -h, --help              show this help message and exit               │
-│ --is-obj-jointed {True,False}                                         │
-│                         (required)                                    │
-│ --dig-config-path PATH  (required)                                    │
-│ --video-path PATH       (required)                                    │
-│ --output-dir PATH       (required)                                    │
-│ --save-hand, --no-save-hand                                           │
-│                         (default: True)                               │
-╰───────────────────────────────────────────────────────────────────────╯
+
+My device info
+```BASH
+(base) gdy@DESKTOP-RS1KQEU:~/rsrd$ nvidia-smi
+Sun May 31 00:33:49 2026       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 535.309.01             Driver Version: 595.79       CUDA Version: 13.2     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA GeForce RTX 5060 ...    On  | 00000000:01:00.0  On |                  N/A |
+| N/A   73C    P4              39W /  40W |   7543MiB /  8151MiB |     86%      Default |
+|                                         |                      |                  N/A |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|    0   N/A  N/A        34      G   /Xwayland                                 N/A      |
+|    0   N/A  N/A    214867      C   /python3.10                               N/A      |
++---------------------------------------------------------------------------------------+
+(base) gdy@DESKTOP-RS1KQEU:~/rsrd$ nvcc --version
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2026 NVIDIA Corporation
+Built on Thu_Mar_19_11:12:51_PM_PDT_2026
+Cuda compilation tools, release 13.2, V13.2.78
+Build cuda_13.2.r13.2/compiler.37668154_0
+(base) gdy@DESKTOP-RS1KQEU:~/rsrd$ which nvcc
+/usr/local/cuda-13.2/bin/nvcc
 ```
-* `--is-obj-jointed`: False for objects that contain removable parts or prismatic joints. Setting False makes the ARAP loss weaker
-* `--dig-config-path`: the path to the dig config.yml file. (NOT GARField), which usually looks like `outputs/datasetname/dig/timestamp/config.yml`
-* `--video-path`: the path to the demonstration .mp4 video
-* `--output-dir`: location to output track trajectory
-* `--save-hand`: if specified will compute hand poses with HaMer, otherwise if `--no-save-hand` will not
 
-After tracking executes you can visualize the 4D reconstruction in a viser window (usually `localhost:8080`), which should look like this!
+Train the model
+```PYTHON
+# 标定相机参数
+ns-process-data images \
+  --data /home/gdy/rsrd/dataset/nerf_recon_dataset/custom/hotdog/images \
+  --output-dir /home/gdy/rsrd/dataset/nerf_recon_dataset/custom/hotdog_processed \
+  --matching-method exhaustive # 少量数据直接穷举，>1000用vocab tree模式
 
-<img src="assets/4d_viewer.png" width="50%" alt="image">
 
-In addition, the output folder you specified will contain:
+# 训练模型
+ns-train garfield --data /home/gdy/rsrd/dataset/nerf_recon_dataset/custom/hotdog_processed
 
-* `camopt_render.mp4`: a file showing an animation of the object pose initialization (including all random seeds)
-* `frame_opt.mp4`: an mp4 file showing the rendered object trajectory from the camera perspective, overlaid on top of the video like so:
+# 保存渲染video到本地
+python scripts/run_tracker.py \
+  --is-obj-jointed False \
+  --dig-config-path /home/gdy/rsrd/outputs/bear/dig/2026-05-31_035315/config.yml \
+  --video-path /home/gdy/rsrd/dataset/nerf_recon_dataset/corl_data/demonstrations/bear.MOV \
+  --output-dir /home/gdy/rsrd/outputs/bear --no-save-hand # 不需要手部信息；如果需要手部信息需要安装hamer
 
-https://github.com/user-attachments/assets/343e0176-975e-4ece-b32e-20815b2053f0
-
-* `keyframes.txt`: a loadable representation of the tracked part poses
-
-### Running the robot visualizer
-For object-centric robot trajectory generation, you need to specify:
-* how many hands to use (`single` or `bimanual`), and
-* the initial object position, from which the robot will plan the part motion trajectory.
-
-There are two options to initialize the object position:
-1. Interactively set the object into an initial position, or
-2. (Requires [ZED SDK](https://www.stereolabs.com/developers/release)) Use an example ZED observation from the robot POV at [`data/robot_init_obs`](https://github.com/kerrj/rsrd/tree/main/data/robot_init_obs).
-
+# robot视角下的操作视图
+python scripts/run_planner.py \
+  --hand-mode single \
+  --track-dir /home/gdy/rsrd/outputs/bear
 ```
-usage: run_planner.py [-h] --hand-mode {single,bimanual} --track-dir PATH [--zed-video-path {None}|PATH]
-
-╭─ options ───────────────────────────────────────────────╮
-│ -h, --help              show this help message and exit │
-│ --hand-mode {single,bimanual}                           │
-│                         (required)                      │
-│ --track-dir PATH        (required)                      │
-│ --zed-video-path {None}|PATH                            │
-│                         (default: None)                 │
-╰─────────────────────────────────────────────────────────╯
-```
-Set `--track-dir` to `--output-dir` as specified from `run_tracker.py`.
-
-If you don't provide `--zed-video-path` (option 1), you need to drag the object into a desired location, fix the object location (unclick "Move object") and click "Generate Trajectory". Otherwise, the script will start trajectory generation immediately after the object is registered into the workspace.
-
-https://github.com/user-attachments/assets/d316d48e-4ff7-44f3-89d2-6a65411ac902
-
-Example output: 
-
-https://github.com/user-attachments/assets/c0a606a1-0ccf-4c2b-b4a4-c20df8e1d2c2
-
-For option 1, you can now un-click "Move Object" to re-generate trajectories from a new object pose, or click "Generate Trajectory" again for more.
-
-
-## Bibtex
-If you find this useful, please cite the paper!
-<pre id="codecell0">@inproceedings{kerr2024rsrd,
-&nbsp;title={Robot See Robot Do: Imitating Articulated Object Manipulation with Monocular 4D Reconstruction},
-&nbsp;author={Justin Kerr and Chung Min Kim and Mingxuan Wu and Brent Yi and Qianqian Wang and Ken Goldberg and Angjoo Kanazawa},
-&nbsp;booktitle={8th Annual Conference on Robot Learning},
-&nbsp;year = {2024},
-} </pre>
