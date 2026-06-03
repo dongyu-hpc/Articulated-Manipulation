@@ -83,7 +83,7 @@ class Frame:
             .squeeze()
             .unsqueeze(-1)
         )
-        return depth.cpu().pin_memory()
+        return depth.cpu()#.pin_memory()
 
     @torch.no_grad()
     def _get_dino(self) -> torch.Tensor:
@@ -93,7 +93,7 @@ class Frame:
             (self.camera.height, self.camera.width),
             antialias=True,
         ).permute(1, 2, 0)
-        return dino_feats.cpu().pin_memory()
+        return dino_feats.cpu()#.pin_memory()  CPU->GPU Speed
 
     @torch.no_grad()
     def _get_hand_mask(self) -> torch.Tensor:
@@ -104,7 +104,7 @@ class Frame:
             ).squeeze()
             == 0.0
         )
-        return hand_mask.cpu().pin_memory()
+        return hand_mask.cpu()#.pin_memory()
 
     @torch.no_grad()
     def get_hand_3d(

@@ -226,27 +226,65 @@ def main(
             time.sleep(1/30)
 
 
-def render_video(
+# def render_video(
+#     optimizer: RigidGroupOptimizer,
+#     motion_clip: cv2.VideoCapture,
+#     num_frames: int
+# ):
+#     renders = []
+#     # Create a render for the video.
+#     for frame_id in tqdm.trange(0, num_frames):
+#         rgb = get_vid_frame(motion_clip, frame_idx=frame_id)
+#         optimizer.apply_keyframe(frame_id)
+#         with torch.no_grad():
+#             outputs = cast(
+#                 dict[str, torch.Tensor],
+#                 optimizer.dig_model.get_outputs(optimizer.sequence[frame_id].frame.camera)
+#             )
+#         render = (outputs["rgb"].cpu() * 255).numpy().astype(np.uint8)
+#         rgb = cv2.resize(rgb, (render.shape[1], render.shape[0]))
+#         render = (render * 0.8 + rgb * 0.2).astype(np.uint8)
+#         renders.append(render)
+#     return renders
+
+def render_video_streaming(
     optimizer: RigidGroupOptimizer,
     motion_clip: cv2.VideoCapture,
-    num_frames: int
+    num_frames: int,
+    output_path: Path,
+    fps: int = 30,
 ):
-    renders = []
-    # Create a render for the video.
+    """Render frames one by one and write directly to video file to avoid memory accumulation."""
+    writer = None
+
     for frame_id in tqdm.trange(0, num_frames):
         rgb = get_vid_frame(motion_clip, frame_idx=frame_id)
         optimizer.apply_keyframe(frame_id)
+
         with torch.no_grad():
             outputs = cast(
                 dict[str, torch.Tensor],
                 optimizer.dig_model.get_outputs(optimizer.sequence[frame_id].frame.camera)
             )
+
         render = (outputs["rgb"].cpu() * 255).numpy().astype(np.uint8)
+        del outputs  # 立刻释放 GPU tensor
+
         rgb = cv2.resize(rgb, (render.shape[1], render.shape[0]))
         render = (render * 0.8 + rgb * 0.2).astype(np.uint8)
-        renders.append(render)
-    return renders
-    
+
+        if writer is None:
+            h, w = render.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h))
+
+        # render 是 RGB，cv2 需要 BGR
+        writer.write(cv2.cvtColor(render, cv2.COLOR_RGB2BGR))
+        del render
+
+    if writer:
+        writer.release()
+
 
 # But this should _really_ be in the rigid optimizer.
 def track_and_save_motion(
@@ -285,16 +323,17 @@ def track_and_save_motion(
         obs = optimizer.create_observation_from_rgb_and_camera(rgb, camera)
         optimizer.add_observation(obs)
         optimizer.fit([frame_id], 50)
-        if num_frames > 300:
+        if num_frames > 50: # lower the threshold
             obs.clear_cache() # Clear the cache to save memory (can overflow on very long videos)
 
         if save_hand:
             optimizer.detect_hands(frame_id)
     
     # Save a pre-smoothing video
-    renders = render_video(optimizer, motion_clip, num_frames)
-    out_clip = mpy.ImageSequenceClip(renders, fps=30)
-    out_clip.write_videofile(str(frame_opt_path).replace(".mp4","_pre_smooth.mp4"), codec="libx264",bitrate='5000k')
+    # renders = render_video(optimizer, motion_clip, num_frames)
+    # out_clip = mpy.ImageSequenceClip(renders, fps=30)
+    # out_clip.write_videofile(str(frame_opt_path).replace(".mp4","_pre_smooth.mp4"), codec="libx264",bitrate='5000k')
+    render_video_streaming(optimizer, motion_clip, num_frames, frame_opt_path)
     # out_clip.write_videofile(str(frame_opt_path).replace('.mp4','_pre_smooth_mac_compat.mp4'),codec='mpeg4',bitrate='5000k')
     
     # Smooth all frames, together.

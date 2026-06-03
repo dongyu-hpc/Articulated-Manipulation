@@ -100,9 +100,11 @@ ns-process-data images \
   --output-dir /home/gdy/rsrd/dataset/nerf_recon_dataset/custom/hotdog_processed \
   --matching-method exhaustive # 少量数据直接穷举，>1000用vocab tree模式
 
-
-# 训练模型
+# 训练GARField
 ns-train garfield --data /home/gdy/rsrd/dataset/nerf_recon_dataset/custom/hotdog_processed
+
+# 训练DiG
+MAX_JOB=1 ns-train dig --data /home/gdy/rsrd/dataset/nerf_recon_dataset/corl_data/scans/bear --pipeline.garfield-ckpt /home/gdy/rsrd/outputs/bear/garfield/2026-05-30_222526/config.yml #串行否则5060卡上oom，default=10
 
 # 保存渲染video到本地
 python scripts/run_tracker.py \
