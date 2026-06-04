@@ -36,43 +36,45 @@ class PartMotionPlanner:
     right_joint_idx: int
     ee_indices: jnp.ndarray
 
-    def __init__(
-        self,
-        optimizer: RigidGroupOptimizer,
-        urdf: yourdfpy.URDF,
-        max_motion_keyframes: int = 50,
-    ):
-        self.optimizer = optimizer
-        self.urdf = urdf
-        self.kin = JaxKinTree.from_urdf(self.urdf)
+    # verison 1
+    # def __init__(
+    #     self,
+    #     optimizer: RigidGroupOptimizer,
+    #     urdf: yourdfpy.URDF,
+    #     max_motion_keyframes: int = 50,
+    # ):
+    #     self.optimizer = optimizer
+    #     self.urdf = urdf
+    #     self.kin = JaxKinTree.from_urdf(self.urdf)
 
-        # The convex bodies tend to be an _underestimate_ due to the decimation process.
-        # To counter this, we inflate the meshes a bit.
-        def coll_handler(meshes: Sequence[trimesh.Trimesh]) -> Sequence[Convex]:
-            _meshes = []
-            for mesh in meshes:
-                mesh.vertices += 0.01 * mesh.vertex_normals
-                _meshes.append(mesh)
-            return [Convex.from_mesh(mesh) for mesh in _meshes]
+    #     # The convex bodies tend to be an _underestimate_ due to the decimation process.
+    #     # To counter this, we inflate the meshes a bit.
+    #     def coll_handler(meshes: Sequence[trimesh.Trimesh]) -> Sequence[Convex]:
+    #         _meshes = []
+    #         for mesh in meshes:
+    #             mesh.vertices += 0.01 * mesh.vertex_normals
+    #             _meshes.append(mesh)
+    #         return [Convex.from_mesh(mesh) for mesh in _meshes]
 
-        # Allow "collisions" within an arm. This is hardcoded for the yumi.
-        from rsrd.robot.yumi_coll_mat import self_coll_ignore_pairs
-        self.robot_coll = RobotColl.from_urdf(
-            self.urdf, coll_handler=coll_handler, self_coll_ignore=self_coll_ignore_pairs
-        )
-        self.object = GraspableObject(self.optimizer)
+    #     # Allow "collisions" within an arm. This is hardcoded for the yumi.
+    #     from rsrd.robot.yumi_coll_mat import self_coll_ignore_pairs
+    #     self.robot_coll = RobotColl.from_urdf(
+    #         self.urdf, coll_handler=coll_handler, self_coll_ignore=self_coll_ignore_pairs
+    #     )
+    #     self.object = GraspableObject(self.optimizer)
 
-        # the self collision matrix is incorrect??
-        self.max_motion_keyframes = max_motion_keyframes
+    #     # the self collision matrix is incorrect??
+    #     self.max_motion_keyframes = max_motion_keyframes
 
-        # These TCP points are defined in `data/yumi_descriptions/yumi.urdf`.
-        left_joint_name, right_joint_name = "left_dummy_joint", "right_dummy_joint"
-        self.left_joint_idx = self.kin.joint_names.index(left_joint_name)
-        self.right_joint_idx = self.kin.joint_names.index(right_joint_name)
-        self.ee_indices = jnp.array(
-            ["finger" in link_name for link_name in self.robot_coll.coll_link_names]
-        )
+    #     # These TCP points are defined in `data/yumi_descriptions/yumi.urdf`.
+    #     left_joint_name, right_joint_name = "left_dummy_joint", "right_dummy_joint"
+    #     self.left_joint_idx = self.kin.joint_names.index(left_joint_name)
+    #     self.right_joint_idx = self.kin.joint_names.index(right_joint_name)
+    #     self.ee_indices = jnp.array(
+    #         ["finger" in link_name for link_name in self.robot_coll.coll_link_names]
+    #     )
 
+    # version 2
     # def __init__(
     #     self,
     #     optimizer: RigidGroupOptimizer,
@@ -122,6 +124,45 @@ class PartMotionPlanner:
     #         ["finger" in link_name for link_name in self.robot_coll.coll_link_names]
     #     )
 
+    # version 3
+    def __init__(
+        self,
+        optimizer: RigidGroupOptimizer,
+        urdf: yourdfpy.URDF,
+        max_motion_keyframes: int = 50,
+    ):
+        self.optimizer = optimizer
+        self.urdf = urdf
+        self.kin = JaxKinTree.from_urdf(self.urdf)
+        
+        def create_coll_bodies(
+            meshes: Sequence[trimesh.Trimesh],
+            joint_indices: jax.Array,
+            link_map: dict[int, jax.Array],
+        ) -> tuple[Sequence[Convex], jax.Array, dict[int, jax.Array]]:
+            _meshes = []
+            for mesh in meshes:
+                mesh.vertices += 0.01 * mesh.vertex_normals
+                _meshes.append(mesh)
+            coll_geoms = [Convex.from_mesh(mesh) for mesh in _meshes]
+            return coll_geoms, joint_indices, link_map
+
+        from rsrd.robot.yumi_coll_mat import self_coll_ignore_pairs
+        self.robot_coll = RobotColl.from_urdf(
+            self.urdf, 
+            create_coll_bodies=create_coll_bodies, 
+            self_coll_ignore=self_coll_ignore_pairs
+        )
+        print(">>> [DEBUG] RobotColl initialized successfully!")
+        self.object = GraspableObject(self.optimizer)
+        print(">>> [DEBUG] GraspableObject created successfully!")
+        self.max_motion_keyframes = max_motion_keyframes
+        left_joint_name, right_joint_name = "left_dummy_joint", "right_dummy_joint"
+        self.left_joint_idx = self.kin.joint_names.index(left_joint_name)
+        self.right_joint_idx = self.kin.joint_names.index(right_joint_name)
+        self.ee_indices = jnp.array(
+            ["finger" in link_name for link_name in self.robot_coll.coll_link_names]
+        )
 
     def plan_single(
         self, T_obj_world: jaxlie.SE3

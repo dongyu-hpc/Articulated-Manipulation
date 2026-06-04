@@ -211,7 +211,13 @@ class GraspablePart:
         )
 
         # Simplify the mesh.
-        _mesh = _mesh.simplify_quadric_decimation(100)  # This affects speed by a lot!
+        # _mesh = _mesh.simplify_quadric_decimation(100)  # This affects speed by a lot!
+        target_face_count = 100
+        current_faces = len(_mesh.faces)
+        if current_faces > target_face_count:
+            # 计算需要移除的比例，例如 1000 个面保留 100 个，则 reduction = 0.9
+            target_reduction = 1.0 - (target_face_count / current_faces)
+            _mesh = _mesh.simplify_quadric_decimation(target_reduction) 
 
         # Correct normals are important for grasp sampling!
         try:

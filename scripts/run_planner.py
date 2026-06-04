@@ -81,6 +81,7 @@ def main(
 
     # Load object position, if available.
     if zed_video_path is not None:
+        print(f">>> [DEBUG] ZED video path provided: {zed_video_path}")
         T_obj_world, (points, colors) = get_T_obj_world_from_zed(
             optimizer, zed_video_path, T_cam_world, track_dir
         )
@@ -96,11 +97,14 @@ def main(
             traj_generator = planner.plan_bimanual(T_obj_world)
         else:
             traj_generator = planner.plan_single(T_obj_world)
+        print(">>> [DEBUG] Trajectory generator initialized from ZED data.")
 
     else:
+        print(">>> [DEBUG] No ZED video path provided! Using default pose.")
         T_obj_world = jaxlie.SE3.from_translation(jnp.array([0.4, 0.0, 0.0]))
         free_object = True
         traj_generator = None
+        print(f">>> [DEBUG] free_object is set to: {free_object}, traj_generator is: {traj_generator}")
 
     obj_frame_handle = server.scene.add_transform_controls(
         "/object",
@@ -124,6 +128,7 @@ def main(
     timesteps = optimizer.part_deltas.shape[0]
     move_obj_handler = server.gui.add_checkbox("Move object", free_object, disabled=(not free_object))
     generate_traj_handler = server.gui.add_button("Generate trajectory", disabled=free_object)
+    print(f">>> [DEBUG] 'Generate trajectory' button created with disabled={generate_traj_handler.disabled}")
     traj_list_handler = server.gui.add_slider("trajectory", 0, 1, 1, 0, disabled=True)
     track_slider = server.gui.add_slider("timestep", 0, timesteps - 1, 1, 0)
     play_checkbox = server.gui.add_checkbox("play", True)
