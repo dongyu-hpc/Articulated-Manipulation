@@ -78,6 +78,7 @@ class PartMotionPlanner:
             joint_indices: jax.Array,
             link_map: dict[int, jax.Array],
         ) -> tuple[Sequence[Convex], jax.Array, dict[int, jax.Array]]:
+            print(">>> [DEBUG] 开始初始化 RobotColl，这可能需要几秒到几分钟...") 
             _meshes = []
             for mesh in meshes:
                 mesh.vertices += 0.01 * mesh.vertex_normals
@@ -85,9 +86,11 @@ class PartMotionPlanner:
             return [Convex.from_mesh(mesh) for mesh in _meshes], joint_indices, link_map
 
         from rsrd.robot.yumi_coll_mat import self_coll_ignore_pairs
+        print(">>> [DEBUG] 即将调用 RobotColl.from_urdf...") 
         self.robot_coll = RobotColl.from_urdf(
             self.urdf, create_coll_bodies=create_coll_bodies, self_coll_ignore=self_coll_ignore_pairs
         )
+        print(">>> [DEBUG] RobotColl 初始化完成！") 
 
 
     def plan_single(
@@ -98,6 +101,8 @@ class PartMotionPlanner:
         timesteps = jnp.arange(len_traj, step=motion_subsample_rate)
 
         for part_idx, joint_idx, grasp_idx in self._get_start_cand_single(T_obj_world):
+            print(f">>> [DEBUG] 开始处理 Part: {part_idx}, Joint: {joint_idx}, Num Grasps: {len(grasp_idx)}") 
+            logger.info( f"Trying part {part_idx}, joint {joint_idx}, with {len(grasp_idx)} trajectories." )
             logger.info(
                 f"Trying part {part_idx}, joint {joint_idx}, with {len(grasp_idx)} trajectories."
             )
@@ -141,6 +146,8 @@ class PartMotionPlanner:
             joint_idx_1,
             grasp_idx,
         ) in self._get_start_cand_bimanual(T_obj_world):
+            print(f">>> [DEBUG] 开始处理 Bimanual Pair: ({part_idx_0}, {part_idx_1}), Joints: ({joint_idx_0}, {joint_idx_1})") 
+            logger.info( f"Trying part {part_idx_0}, {part_idx_1}, joint {joint_idx_0}, {joint_idx_1}, with {len(grasp_idx)} trajectories." )
             logger.info(
                 f"Trying part {part_idx_0}, {part_idx_1}, joint {joint_idx_0}, {joint_idx_1}, with {len(grasp_idx)} trajectories."
             )
@@ -184,13 +191,17 @@ class PartMotionPlanner:
         """
         Find a list of collision-free IK solutions to reach the object.
         """
+        print(">>> [DEBUG] 正在进入 _get_start_cand_single...") 
         part_indices = self.object.rank_parts_to_move_single()
-
+        print(f">>> [DEBUG] 待处理部件总数 (part_indices): {len(part_indices)}")
         for part_idx in part_indices:
+            print(f">>> [DEBUG] 正在处理 Part: {part_idx}") 
             for joint_idx in [self.left_joint_idx, self.right_joint_idx]:
+                print(f">>> [DEBUG] >>> 正在为 Joint: {joint_idx} 寻找无碰撞抓取点...") 
                 succ_grasp_idx = self._get_coll_free_grasp_indices(
                     part_idx, joint_idx, T_obj_world
                 )
+                print(f">>> [DEBUG] >>> 完成! 找到 {len(succ_grasp_idx)} 个有效抓取点.") 
                 yield (part_idx, joint_idx, succ_grasp_idx)
 
     def _get_start_cand_bimanual(self, T_obj_world: jaxlie.SE3):

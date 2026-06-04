@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(///wsl.localhost/Ubuntu-22.04//**)",
+      "Bash(python -c \"import jaxmp; print\\(jaxmp.__file__\\)\")",
+      "Bash(python3 -c \"import jaxmp; print\\(jaxmp.__file__\\)\")",
+      "Bash(pip show *)",
+      "Bash(cd \"\\\\\\\\wsl.localhost\\\\Ubuntu-22.04\\\\home\\\\gdy\\\\rsrd\")",
+      "Bash(wsl -d Ubuntu-22.04 -- bash -lc 'cd /home/gdy/rsrd && find / -name \"_robot_coll.py\" 2>/dev/null; echo \"===PYJAXMP===\"; python -c \"import jaxmp; print\\(jaxmp.__file__\\)\" 2>&1 | head -3')",
+      "Bash(grep -rln \"run_planner\\\\|PartMotionPlanner\\\\|plan_bimanual\\\\|plan_single\" \"\\\\\\\\wsl.localhost\\\\Ubuntu-22.04\\\\home\\\\gdy\\\\rsrd\")",
+      "Bash(python -c \"import jaxmp,os; print\\(os.path.dirname\\(jaxmp.__file__\\)\\)\")",
+      "Bash(ls \"\\\\\\\\wsl.localhost\\\\Ubuntu-22.04\\\\home\\\\gdy\")",
+      "Bash(ls \"\\\\\\\\wsl.localhost\\\\Ubuntu-22.04\\\\home\\\\gdy\\\\anaconda3\\\\envs\" \"\\\\\\\\wsl.localhost\\\\Ubuntu-22.04\\\\home\\\\gdy\\\\miniconda3\\\\envs\" \"\\\\\\\\wsl.localhost\\\\Ubuntu-22.04\\\\home\\\\gdy\\\\miniforge3\\\\envs\")"
+    ]
+  }
+}
