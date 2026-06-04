@@ -80,6 +80,7 @@ def main(
     )
 
     # Load object position, if available.
+    keyframes_file = track_dir / "keyframes.txt"
     if zed_video_path is not None:
         print(f">>> [DEBUG] ZED video path provided: {zed_video_path}")
         T_obj_world, (points, colors) = get_T_obj_world_from_zed(
@@ -98,9 +99,40 @@ def main(
         else:
             traj_generator = planner.plan_single(T_obj_world)
         print(">>> [DEBUG] Trajectory generator initialized from ZED data.")
+    elif keyframes_file.exists():
+        # 【NeRF 数据直连模式】
+        print(f">>> [INFO] No ZED video found. Loading NeRF data from {keyframes_file}...")
 
+        # 1. 读取 JSON 格式的 keyframes.txt
+        with open(keyframes_file, 'r') as f:
+            data = json.load(f)
+        
+        # 2. 提取 part_deltas (这是一个 3D 列表: [帧数][物体部件][7维位姿])
+        part_deltas = data['part_deltas']
+        
+        # 3. 策略：取最后一帧（最稳定的姿态），取第一个物体（通常是整体物体）
+        # 如果物体没出现，请尝试把 0 改成 1 或 2
+        last_frame_idx = -1 
+        object_idx = 0
+        
+        pose_7d = part_deltas[last_frame_idx][object_idx]
+        print(f"Successfully loaded 7D pose: {pose_7d}")
+
+        # 4. 解析 7D 数据 [qw, qx, qy, qz, tx, ty, tz]
+        # 注意：jaxlie 需要四元数在前，且顺序为 [x, y, z, w]
+        qw, qx, qy, qz, tx, ty, tz = pose_7d
+        
+        # 5. 构建 SE3 变换矩阵
+        T_obj_world = jaxlie.SE3.from_quaternion_and_translation(
+            quaternion=jnp.array([qx, qy, qz, qw]),  # 转换为 xyzw 顺序
+            translation=jnp.array([tx, ty, tz])
+        )
+
+        # 6. 关键步骤：解除锁定，允许生成轨迹
+        free_object = False
+        print(">>> [INFO] Object pose loaded. 'Generate trajectory' button should be enabled now!")
     else:
-        print(">>> [DEBUG] No ZED video path provided! Using default pose.")
+        print(">>> [DEBUG] No ZED video path and keyframes provided! Using default pose.")
         T_obj_world = jaxlie.SE3.from_translation(jnp.array([0.4, 0.0, 0.0]))
         free_object = True
         traj_generator = None
