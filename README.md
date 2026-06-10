@@ -118,3 +118,13 @@ python scripts/run_planner.py \
   --hand-mode single \
   --track-dir /home/gdy/rsrd/outputs/bear
 ```
+Run batch test
+``` bash
+# 新建tmux状态
+tmux new-session -d -s rsrd-batch
+# 运行脚本
+chmod +x ~/rsrd/batch_test.sh
+tmux send-keys -t rsrd-batch '~/rsrd/batch_test.sh' C-m
+# 查看运行状态
+tmux attach -t rsrd-batch
+```
