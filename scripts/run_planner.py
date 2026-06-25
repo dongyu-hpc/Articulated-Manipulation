@@ -81,7 +81,34 @@ def main(
 
     # Load object position, if available.
     keyframes_file = track_dir / "keyframes.txt"
+    # breakpoint()
+    # if zed_video_path is not None:
+    #     print(f">>> [DEBUG] ZED video path provided: {zed_video_path}")
+    #     T_obj_world, (points, colors) = get_T_obj_world_from_zed(
+    #         optimizer, zed_video_path, T_cam_world, track_dir
+    #     )
+    #     server.scene.add_point_cloud(
+    #         "/camera/points",
+    #         points=points,
+    #         colors=colors,
+    #         point_size=0.005,
+    #     )
+    #     free_object = False  # Fix at initialization zed point.
+        
+    #     if hand_mode == "bimanual":
+    #         traj_generator = planner.plan_bimanual(T_obj_world)
+    #     else:
+    #         traj_generator = planner.plan_single(T_obj_world)
+    #     print(">>> [DEBUG] Trajectory generator initialized from ZED data.")
+    # else:
+    #     print(">>> [DEBUG] No ZED video path and keyframes provided! Using default pose.")
+    #     T_obj_world = jaxlie.SE3.from_translation(jnp.array([0.4, 0.0, 0.0]))
+    #     free_object = True
+    #     traj_generator = None
+    #     print(f">>> [DEBUG] free_object is set to: {free_object}, traj_generator is: {traj_generator}")
+
     if zed_video_path is not None:
+        # ... 保持原有的 ZED 视频处理逻辑不变 ...
         print(f">>> [DEBUG] ZED video path provided: {zed_video_path}")
         T_obj_world, (points, colors) = get_T_obj_world_from_zed(
             optimizer, zed_video_path, T_cam_world, track_dir
@@ -92,53 +119,76 @@ def main(
             colors=colors,
             point_size=0.005,
         )
-        free_object = False  # Fix at initialization zed point.
-        
+        free_object = False  
         if hand_mode == "bimanual":
             traj_generator = planner.plan_bimanual(T_obj_world)
         else:
             traj_generator = planner.plan_single(T_obj_world)
         print(">>> [DEBUG] Trajectory generator initialized from ZED data.")
-    # elif keyframes_file.exists():
-    #     # 【NeRF 数据直连模式】
-    #     print(f">>> [INFO] No ZED video found. Loading NeRF data from {keyframes_file}...")
 
-    #     # 1. 读取 JSON 格式的 keyframes.txt
-    #     with open(keyframes_file, 'r') as f:
-    #         data = json.load(f)
-        
-    #     # 2. 提取 part_deltas (这是一个 3D 列表: [帧数][物体部件][7维位姿])
-    #     part_deltas = data['part_deltas']
-        
-    #     # 3. 策略：取最后一帧（最稳定的姿态），取第一个物体（通常是整体物体）
-    #     # 如果物体没出现，请尝试把 0 改成 1 或 2
-    #     last_frame_idx = -1 
-    #     object_idx = 0
-        
-    #     pose_7d = part_deltas[last_frame_idx][object_idx]
-    #     print(f"Successfully loaded 7D pose: {pose_7d}")
-
-    #     # 4. 解析 7D 数据 [qw, qx, qy, qz, tx, ty, tz]
-    #     # 注意：jaxlie 需要四元数在前，且顺序为 [x, y, z, w]
-    #     qw, qx, qy, qz, tx, ty, tz = pose_7d
-        
-    #     # 5. 构建 SE3 变换矩阵
-    #     rotation = jaxlie.SO3(wxyz=jnp.array([qw, qx, qy, qz]))
-    #     T_obj_world = jaxlie.SE3.from_rotation_and_translation(
-    #         rotation=rotation,
-    #         translation=jnp.array([tx, ty, tz])
-    #     )
-
-    #     # 6. 关键步骤：解除锁定，允许生成轨迹
-    #     free_object = True
-    #     print(">>> [INFO] Object pose loaded. 'Generate trajectory' button should be enabled now!")
     else:
-        print(">>> [DEBUG] No ZED video path and keyframes provided! Using default pose.")
-        T_obj_world = jaxlie.SE3.from_translation(jnp.array([0.4, 0.0, 0.0]))
-        free_object = True
-        traj_generator = None
-        print(f">>> [DEBUG] free_object is set to: {free_object}, traj_generator is: {traj_generator}")
+        # ========== 修改从这里开始 ==========
+        # 尝试从 track_dir 中读取 keyframes.txt
+        keyframes_path = track_dir / "keyframes.txt"
+        
+        if keyframes_path.exists():
+            print(f">>> [DEBUG] No ZED video, but found keyframes at: {keyframes_path}")
+            
+            # TODO: 在这里添加读取 keyframes.txt 并解析出 T_obj_world 的代码
+            # 假设你解析后得到了 T_obj_world，例如：
+            # T_obj_world = load_T_obj_from_keyframes(keyframes_path) 
+            # ====== 核心修改：读取并解析 partdel.txt ======
+            import numpy as np
+            import json
+            from jaxlie import SE3, SO3
+            
+            # 1. 读取整个 JSON 文件
+            with open(keyframes_path, 'r') as f:
+                data = json.load(f)
+            
+            # 2. 获取 part_deltas 数组
+            keyframes_path = data["part_deltas"]
+            
+            # 3. 提取最后一个时间步的数据作为目标位姿
+            #    我们假设要操作的是第一个物体/部分，所以取 keyframes_path[0]
+            #    然后取这个序列的最后一个状态 [-1]
+            final_pose_data = keyframes_path[0][-1]
+            
+            # 4. 解析四元数 (前4个值) 和平移 (后3个值)
+            #    数据格式: [qw, qx, qy, qz, tx, ty, tz]
+            quat_xyzw = np.array(final_pose_data[:4]) # jaxlie 使用 [x, y, z, w] 格式
+            quat_xyzw = np.roll(quat_xyzw, -1) # 将 [w, x, y, z] 转换为 [x, y, z, w]
+            
+            translation = np.array(final_pose_data[4:])
+            
+            # 5. 组合成最终的位姿 T_obj_world
+            T_obj_world = SE3.from_rotation_and_translation(
+                rotation=SO3.from_quaternion_xyzw(quat_xyzw),
+                translation=translation
+            )
+            
+            print(f">>> [DEBUG] Successfully created T_obj_world from partdel. Translation: {translation}")
 
+            # ================================================
+            
+            free_object = False  # 既然有真实数据，就不要用默认位姿了
+            
+            # 使用解析出的 T_obj_world 生成轨迹
+            if hand_mode == "bimanual":
+                traj_generator = planner.plan_bimanual(T_obj_world)
+            else:
+                traj_generator = planner.plan_single(T_obj_world)
+                
+            print(">>> [DEBUG] Trajectory generator initialized from keyframes.")
+        else:
+            # 如果既没有视频，也没有 keyframes，才使用默认位姿
+            print(">>> [DEBUG] No ZED video path and keyframes provided! Using default pose.")
+            T_obj_world = jaxlie.SE3.from_translation(jnp.array([0.4, 0.0, 0.0]))
+            free_object = True
+            traj_generator = None
+            print(f">>> [DEBUG] free_object is set to: {free_object}, traj_generator is: {traj_generator}")
+        # ========== 修改到这里结束 ==========
+    
     obj_frame_handle = server.scene.add_transform_controls(
         "/object",
         position=onp.array(T_obj_world.translation().squeeze()),

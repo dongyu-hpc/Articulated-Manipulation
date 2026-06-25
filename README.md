@@ -112,12 +112,19 @@ python scripts/run_tracker.py \
   --dig-config-path /home/gdy/rsrd/outputs/bear/dig/2026-05-31_035315/config.yml \
   --video-path /home/gdy/rsrd/dataset/nerf_recon_dataset/corl_data/demonstrations/bear.MOV \
   --output-dir /home/gdy/rsrd/outputs/bear --no-save-hand # 不需要手部信息；如果需要手部信息需要安装hamer
+```
+优化重建速度慢的问题。
 
+Motion planning
+```
 # robot视角下的操作视图
 python scripts/run_planner.py \
   --hand-mode single \
   --track-dir /home/gdy/rsrd/outputs/bear
 ```
+解决机械臂无法跟随轨迹运动的问题。
+
+
 Run batch test
 ``` bash
 # 新建tmux状态

@@ -20,7 +20,7 @@ from rsrd.robot.graspable_obj import GraspableObject
 from rsrd.robot.motion_plan_yumi import YUMI_REST_POSE
 from rsrd.robot.motion_plan_yumi import motion_plan_yumi
 
-solve_ik_vmap = jax.vmap(solve_ik, in_axes=(None, 0, None, None))
+solve_ik_vmap = jax.vmap(solve_ik, in_axes=(None, 0, None, None, None, None))
 mp_yumi_vmap = jax.vmap(motion_plan_yumi, in_axes=(None, None, 0))
 
 
@@ -134,6 +134,20 @@ class PartMotionPlanner:
         self.optimizer = optimizer
         self.urdf = urdf
         self.kin = JaxKinTree.from_urdf(self.urdf)
+
+        import jaxls
+        import dataclasses
+        
+        # 动态获取当前机械臂的主动关节数量
+        num_joints = self.kin.num_actuated_joints
+        
+        # 使用 dataclass 定义变量类型，并指定切空间维度
+        @dataclasses.dataclass
+        class JointVar:
+            tangent_dim: int = num_joints
+            
+        self.JointVar = JointVar
+        self.ik_weight = jnp.ones(num_joints)
         
         def create_coll_bodies(
             meshes: Sequence[trimesh.Trimesh],
@@ -327,6 +341,8 @@ class PartMotionPlanner:
             T_grasp_world,
             jnp.array([joint_idx]),
             jnp.array(YUMI_REST_POSE),
+            self.JointVar,      # 补上关节变量类型
+            self.ik_weight,     # 补上IK权重
         )
 
         # Check that the IK actually goes to the correct place.
