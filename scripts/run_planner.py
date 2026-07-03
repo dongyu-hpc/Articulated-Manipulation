@@ -7,6 +7,10 @@ Run object-centric robot motion planning. (robot do! haha).
 import os
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
+from loguru import logger
+os.makedirs("debug", exist_ok=True)
+logger.add("debug/run_planner_{time}.log", level="DEBUG")
+
 import json
 from typing import Literal, Optional
 from threading import Lock
@@ -80,36 +84,7 @@ def main(
     )
 
     # Load object position, if available.
-    keyframes_file = track_dir / "keyframes.txt"
-    # breakpoint()
-    # if zed_video_path is not None:
-    #     print(f">>> [DEBUG] ZED video path provided: {zed_video_path}")
-    #     T_obj_world, (points, colors) = get_T_obj_world_from_zed(
-    #         optimizer, zed_video_path, T_cam_world, track_dir
-    #     )
-    #     server.scene.add_point_cloud(
-    #         "/camera/points",
-    #         points=points,
-    #         colors=colors,
-    #         point_size=0.005,
-    #     )
-    #     free_object = False  # Fix at initialization zed point.
-        
-    #     if hand_mode == "bimanual":
-    #         traj_generator = planner.plan_bimanual(T_obj_world)
-    #     else:
-    #         traj_generator = planner.plan_single(T_obj_world)
-    #     print(">>> [DEBUG] Trajectory generator initialized from ZED data.")
-    # else:
-    #     print(">>> [DEBUG] No ZED video path and keyframes provided! Using default pose.")
-    #     T_obj_world = jaxlie.SE3.from_translation(jnp.array([0.4, 0.0, 0.0]))
-    #     free_object = True
-    #     traj_generator = None
-    #     print(f">>> [DEBUG] free_object is set to: {free_object}, traj_generator is: {traj_generator}")
-
     if zed_video_path is not None:
-        # ... 保持原有的 ZED 视频处理逻辑不变 ...
-        print(f">>> [DEBUG] ZED video path provided: {zed_video_path}")
         T_obj_world, (points, colors) = get_T_obj_world_from_zed(
             optimizer, zed_video_path, T_cam_world, track_dir
         )
@@ -119,76 +94,18 @@ def main(
             colors=colors,
             point_size=0.005,
         )
-        free_object = False  
+        free_object = False  # Fix at initialization zed point.
+        
         if hand_mode == "bimanual":
             traj_generator = planner.plan_bimanual(T_obj_world)
         else:
             traj_generator = planner.plan_single(T_obj_world)
-        print(">>> [DEBUG] Trajectory generator initialized from ZED data.")
 
     else:
-        # ========== 修改从这里开始 ==========
-        # 尝试从 track_dir 中读取 keyframes.txt
-        keyframes_path = track_dir / "keyframes.txt"
-        
-        if keyframes_path.exists():
-            print(f">>> [DEBUG] No ZED video, but found keyframes at: {keyframes_path}")
-            
-            # TODO: 在这里添加读取 keyframes.txt 并解析出 T_obj_world 的代码
-            # 假设你解析后得到了 T_obj_world，例如：
-            # T_obj_world = load_T_obj_from_keyframes(keyframes_path) 
-            # ====== 核心修改：读取并解析 partdel.txt ======
-            import numpy as np
-            import json
-            from jaxlie import SE3, SO3
-            
-            # 1. 读取整个 JSON 文件
-            with open(keyframes_path, 'r') as f:
-                data = json.load(f)
-            
-            # 2. 获取 part_deltas 数组
-            keyframes_path = data["part_deltas"]
-            
-            # 3. 提取最后一个时间步的数据作为目标位姿
-            #    我们假设要操作的是第一个物体/部分，所以取 keyframes_path[0]
-            #    然后取这个序列的最后一个状态 [-1]
-            final_pose_data = keyframes_path[0][-1]
-            
-            # 4. 解析四元数 (前4个值) 和平移 (后3个值)
-            #    数据格式: [qw, qx, qy, qz, tx, ty, tz]
-            quat_xyzw = np.array(final_pose_data[:4]) # jaxlie 使用 [x, y, z, w] 格式
-            quat_xyzw = np.roll(quat_xyzw, -1) # 将 [w, x, y, z] 转换为 [x, y, z, w]
-            
-            translation = np.array(final_pose_data[4:])
-            
-            # 5. 组合成最终的位姿 T_obj_world
-            T_obj_world = SE3.from_rotation_and_translation(
-                rotation=SO3.from_quaternion_xyzw(quat_xyzw),
-                translation=translation
-            )
-            
-            print(f">>> [DEBUG] Successfully created T_obj_world from partdel. Translation: {translation}")
+        T_obj_world = jaxlie.SE3.from_translation(jnp.array([0.4, 0.0, 0.0]))
+        free_object = True
+        traj_generator = None
 
-            # ================================================
-            
-            free_object = False  # 既然有真实数据，就不要用默认位姿了
-            
-            # 使用解析出的 T_obj_world 生成轨迹
-            if hand_mode == "bimanual":
-                traj_generator = planner.plan_bimanual(T_obj_world)
-            else:
-                traj_generator = planner.plan_single(T_obj_world)
-                
-            print(">>> [DEBUG] Trajectory generator initialized from keyframes.")
-        else:
-            # 如果既没有视频，也没有 keyframes，才使用默认位姿
-            print(">>> [DEBUG] No ZED video path and keyframes provided! Using default pose.")
-            T_obj_world = jaxlie.SE3.from_translation(jnp.array([0.4, 0.0, 0.0]))
-            free_object = True
-            traj_generator = None
-            print(f">>> [DEBUG] free_object is set to: {free_object}, traj_generator is: {traj_generator}")
-        # ========== 修改到这里结束 ==========
-    
     obj_frame_handle = server.scene.add_transform_controls(
         "/object",
         position=onp.array(T_obj_world.translation().squeeze()),
@@ -211,13 +128,13 @@ def main(
     timesteps = optimizer.part_deltas.shape[0]
     move_obj_handler = server.gui.add_checkbox("Move object", free_object, disabled=(not free_object))
     generate_traj_handler = server.gui.add_button("Generate trajectory", disabled=free_object)
-    print(f">>> [DEBUG] 'Generate trajectory' button created with disabled={generate_traj_handler.disabled}")
     traj_list_handler = server.gui.add_slider("trajectory", 0, 1, 1, 0, disabled=True)
     track_slider = server.gui.add_slider("timestep", 0, timesteps - 1, 1, 0)
     play_checkbox = server.gui.add_checkbox("play", True)
     traj_gen_lock = Lock()
 
     list_traj = jnp.array(YUMI_REST_POSE).reshape(1, 1, -1).repeat(timesteps, axis=1)
+    pending_traj = None # 防死锁
 
     # While moving object / fixing object, trajectories need to be regenerated.
     # So it should clear all the cache.
@@ -241,26 +158,85 @@ def main(
         else:
             traj_generator = planner.plan_single(T_obj_world)
 
+    # @generate_traj_handler.on_click
+    # def _(_):
+    #     nonlocal list_traj
+    #     assert traj_generator is not None
+    #     generate_traj_handler.disabled = True
+    #     move_obj_handler.disabled = True
+    #     with traj_gen_lock:
+    #         try:
+    #             logger.info("🔄 正在生成轨迹，请稍候...")
+    #             list_traj = next(traj_generator)
+    #             logger.success(f"✅ 轨迹生成成功！共 {list_traj.shape[0]} 条候选轨迹，每条 {list_traj.shape[1]} 帧。")
+    #         except StopIteration:
+    #             logger.error("❌ 所有候选轨迹已穷尽，没有更多可用轨迹了！请移动物体位置后重试。")
+    #             generate_traj_handler.disabled = False
+    #             move_obj_handler.disabled = False
+    #             return
+    #         except ValueError as e:
+    #             logger.error(f"❌ 轨迹规划失败：{e}")
+    #             generate_traj_handler.disabled = False
+    #             move_obj_handler.disabled = False
+    #             return
+    #         except Exception as e:
+    #             logger.exception(f"💥 未预期的错误，请检查终端完整报错：{e}")
+    #             generate_traj_handler.disabled = False
+    #             move_obj_handler.disabled = False
+    #             return
+    #     generate_traj_handler.disabled = False
+    #     traj_list_handler.max = list_traj.shape[0] - 1
+    #     traj_list_handler.value = 0
+    #     traj_list_handler.disabled = False
+    #     move_obj_handler.disabled = False
     @generate_traj_handler.on_click
     def _(_):
-        nonlocal list_traj
+        nonlocal pending_traj  # ← 改这里
         assert traj_generator is not None
         generate_traj_handler.disabled = True
         move_obj_handler.disabled = True
-        with traj_gen_lock:
-            list_traj = next(traj_generator)
-        generate_traj_handler.disabled = False
-        traj_list_handler.max = list_traj.shape[0] - 1
-        traj_list_handler.value = 0
-        traj_list_handler.disabled = False
-        move_obj_handler.disabled = False
+        try:
+            logger.info("🔄 正在生成轨迹，请稍候...")
+            new_traj = next(traj_generator)  # ← 不在 lock 里
+            logger.success(f"✅ 轨迹生成成功！共 {new_traj.shape[0]} 条候选轨迹，每条 {new_traj.shape[1]} 帧。")
+            logger.debug(f"第0条轨迹第0帧前3个关节: {onp.array(new_traj[0, 0, :3])}")
+            logger.debug(f"第0条轨迹第25帧前3个关节: {onp.array(new_traj[0, 25, :3])}")
+            with traj_gen_lock:
+                pending_traj = new_traj  # ← 只有赋值在 lock 里
+            logger.info(f"🔔 pending_traj 已赋值，shape={pending_traj.shape}")
+            traj_list_handler.max = new_traj.shape[0] - 1
+            traj_list_handler.value = 0
+            traj_list_handler.disabled = False
+        except StopIteration:
+            logger.error("❌ 所有候选轨迹已穷尽！请移动物体位置后重试。")
+        except ValueError as e:
+            logger.error(f"❌ 轨迹规划失败：{e}")
+        except Exception as e:
+            logger.exception(f"💥 未预期的错误：{e}")
+        finally:
+            generate_traj_handler.disabled = False
+            move_obj_handler.disabled = False
+
 
     while True:
         if play_checkbox.value:
             track_slider.value = (track_slider.value + 1) % timesteps
 
-        traj = list_traj[traj_list_handler.value]
+        # with traj_gen_lock:
+        #     traj = list_traj[traj_list_handler.value]
+        # 检查是否有新轨迹，只在赋值这一步加锁
+        with traj_gen_lock:
+            if pending_traj is not None:
+                logger.info(f"🔔 主线程检测到 pending_traj，准备切换")
+                list_traj = pending_traj
+                pending_traj = None
+                logger.info(f"🎯 已切换到新轨迹，shape={list_traj.shape}")
+                logger.info(f"第0条轨迹第0帧前3个关节: {onp.array(list_traj[0, 0, :3])}")
+                logger.info(f"第0条轨迹第25帧前3个关节: {onp.array(list_traj[0, 25, :3])}")
+        traj = list_traj[traj_list_handler.value] 
         tstep = track_slider.value
+        logger.debug(f"tstep={tstep}, traj shape={traj.shape}, joints[0:3]={onp.array(traj[tstep])[:3]}")
+
 
         part_deltas = optimizer.part_deltas[tstep]
         viser_rsrd.update_cfg(part_deltas)
@@ -268,6 +244,7 @@ def main(
         viser_urdf.update_cfg(onp.array(traj[tstep]))
 
         time.sleep(0.05)
+    
 
 
 def get_optimizer(

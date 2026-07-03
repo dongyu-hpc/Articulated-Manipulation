@@ -12,14 +12,18 @@ import trimesh
 import yourdfpy
 
 from jaxmp import JaxKinTree
-from jaxmp.coll import RobotColl, collide, Convex
+from jaxmp.coll import RobotColl, collide, Convex, link_to_capsules,  CollGeom
 from jaxmp.extras.solve_ik import solve_ik
+from jaxmp.robot_factors import RobotFactors
+
 
 from rsrd.motion.motion_optimizer import RigidGroupOptimizer
 from rsrd.robot.graspable_obj import GraspableObject
 from rsrd.robot.motion_plan_yumi import YUMI_REST_POSE
 from rsrd.robot.motion_plan_yumi import motion_plan_yumi
 
+
+# solve_ik_vmap = jax.vmap(solve_ik, in_axes=(None, 0, None, None))
 solve_ik_vmap = jax.vmap(solve_ik, in_axes=(None, 0, None, None, None, None))
 mp_yumi_vmap = jax.vmap(motion_plan_yumi, in_axes=(None, None, 0))
 
@@ -36,95 +40,6 @@ class PartMotionPlanner:
     right_joint_idx: int
     ee_indices: jnp.ndarray
 
-    # verison 1
-    # def __init__(
-    #     self,
-    #     optimizer: RigidGroupOptimizer,
-    #     urdf: yourdfpy.URDF,
-    #     max_motion_keyframes: int = 50,
-    # ):
-    #     self.optimizer = optimizer
-    #     self.urdf = urdf
-    #     self.kin = JaxKinTree.from_urdf(self.urdf)
-
-    #     # The convex bodies tend to be an _underestimate_ due to the decimation process.
-    #     # To counter this, we inflate the meshes a bit.
-    #     def coll_handler(meshes: Sequence[trimesh.Trimesh]) -> Sequence[Convex]:
-    #         _meshes = []
-    #         for mesh in meshes:
-    #             mesh.vertices += 0.01 * mesh.vertex_normals
-    #             _meshes.append(mesh)
-    #         return [Convex.from_mesh(mesh) for mesh in _meshes]
-
-    #     # Allow "collisions" within an arm. This is hardcoded for the yumi.
-    #     from rsrd.robot.yumi_coll_mat import self_coll_ignore_pairs
-    #     self.robot_coll = RobotColl.from_urdf(
-    #         self.urdf, coll_handler=coll_handler, self_coll_ignore=self_coll_ignore_pairs
-    #     )
-    #     self.object = GraspableObject(self.optimizer)
-
-    #     # the self collision matrix is incorrect??
-    #     self.max_motion_keyframes = max_motion_keyframes
-
-    #     # These TCP points are defined in `data/yumi_descriptions/yumi.urdf`.
-    #     left_joint_name, right_joint_name = "left_dummy_joint", "right_dummy_joint"
-    #     self.left_joint_idx = self.kin.joint_names.index(left_joint_name)
-    #     self.right_joint_idx = self.kin.joint_names.index(right_joint_name)
-    #     self.ee_indices = jnp.array(
-    #         ["finger" in link_name for link_name in self.robot_coll.coll_link_names]
-    #     )
-
-    # version 2
-    # def __init__(
-    #     self,
-    #     optimizer: RigidGroupOptimizer,
-    #     urdf: yourdfpy.URDF,
-    #     max_motion_keyframes: int = 50,
-    # ):
-    #     self.optimizer = optimizer
-    #     self.urdf = urdf
-    #     self.kin = JaxKinTree.from_urdf(self.urdf)
-
-    #     # The convex bodies tend to be an _underestimate_ due to the decimation process.
-    #     # To counter this, we inflate the meshes a bit.
-    #     # def coll_handler(meshes: Sequence[trimesh.Trimesh]) -> Sequence[Convex]:
-    #     #     _meshes = []
-    #     #     for mesh in meshes:
-    #     #         mesh.vertices += 0.01 * mesh.vertex_normals
-    #     #         _meshes.append(mesh)
-    #     #     return [Convex.from_mesh(mesh) for mesh in _meshes]
-
-    #     def create_coll_bodies(
-    #         meshes: Sequence[trimesh.Trimesh],
-    #         joint_indices: jax.Array,
-    #         link_map: dict[int, jax.Array],
-    #     ) -> tuple[Sequence[Convex], jax.Array, dict[int, jax.Array]]:
-    #         print(">>> [DEBUG] 开始初始化 RobotColl，这可能需要几秒到几分钟...") 
-    #         _meshes = []
-    #         for mesh in meshes:
-    #             mesh.vertices += 0.01 * mesh.vertex_normals
-    #             _meshes.append(mesh)
-    #         return [Convex.from_mesh(mesh) for mesh in _meshes], joint_indices, link_map
-
-    #     # Allow "collisions" within an arm. This is hardcoded for the yumi.
-    #     from rsrd.robot.yumi_coll_mat import self_coll_ignore_pairs
-    #     print(">>> [DEBUG] 即将调用 RobotColl.from_urdf...") 
-    #     self.robot_coll = RobotColl.from_urdf(
-    #         self.urdf, create_coll_bodies=create_coll_bodies, self_coll_ignore=self_coll_ignore_pairs
-    #     )
-    #     print(">>> [DEBUG] RobotColl 初始化完成！") 
-    #     self.object = GraspableObject(self.optimizer)
-    #     # the self collision matrix is incorrect??
-    #     self.max_motion_keyframes = max_motion_keyframes
-    #     # These TCP points are defined in `data/yumi_descriptions/yumi.urdf`.
-    #     left_joint_name, right_joint_name = "left_dummy_joint", "right_dummy_joint"
-    #     self.left_joint_idx = self.kin.joint_names.index(left_joint_name)
-    #     self.right_joint_idx = self.kin.joint_names.index(right_joint_name)
-    #     self.ee_indices = jnp.array(
-    #         ["finger" in link_name for link_name in self.robot_coll.coll_link_names]
-    #     )
-
-    # version 3
     def __init__(
         self,
         optimizer: RigidGroupOptimizer,
@@ -135,42 +50,42 @@ class PartMotionPlanner:
         self.urdf = urdf
         self.kin = JaxKinTree.from_urdf(self.urdf)
 
-        import jaxls
-        import dataclasses
-        
-        # 动态获取当前机械臂的主动关节数量
-        num_joints = self.kin.num_actuated_joints
-        
-        # 使用 dataclass 定义变量类型，并指定切空间维度
-        @dataclasses.dataclass
-        class JointVar:
-            tangent_dim: int = num_joints
-            
-        self.JointVar = JointVar
-        self.ik_weight = jnp.ones(num_joints)
-        
-        def create_coll_bodies(
+        # The convex bodies tend to be an _underestimate_ due to the decimation process.
+        # To counter this, we inflate the meshes a bit.
+        # def coll_handler(meshes: Sequence[trimesh.Trimesh]) -> Sequence[Convex]:
+        #     _meshes = []
+        #     for mesh in meshes:
+        #         mesh.vertices += 0.01 * mesh.vertex_normals
+        #         _meshes.append(mesh)
+        #     return [Convex.from_mesh(mesh) for mesh in _meshes]
+        def coll_handler(
             meshes: Sequence[trimesh.Trimesh],
-            joint_indices: jax.Array,
-            link_map: dict[int, jax.Array],
-        ) -> tuple[Sequence[Convex], jax.Array, dict[int, jax.Array]]:
+            link_joint_idx: jax.Array,
+            link_to_colls: dict,
+        ) -> tuple:
             _meshes = []
             for mesh in meshes:
                 mesh.vertices += 0.01 * mesh.vertex_normals
                 _meshes.append(mesh)
-            coll_geoms = [Convex.from_mesh(mesh) for mesh in _meshes]
-            return coll_geoms, joint_indices, link_map
+            from jaxmp.coll import link_to_capsules
+            return link_to_capsules(_meshes, link_joint_idx, link_to_colls)
 
+        # Allow "collisions" within an arm. This is hardcoded for the yumi.
+        # from rsrd.robot.yumi_coll_mat import self_coll_ignore_pairs
+        # self.robot_coll = RobotColl.from_urdf(
+        #     self.urdf, coll_handler=coll_handler, self_coll_ignore=self_coll_ignore_pairs
+        # )
+        # self.object = GraspableObject(self.optimizer)
         from rsrd.robot.yumi_coll_mat import self_coll_ignore_pairs
         self.robot_coll = RobotColl.from_urdf(
-            self.urdf, 
-            create_coll_bodies=create_coll_bodies, 
-            self_coll_ignore=self_coll_ignore_pairs
+            self.urdf, create_coll_bodies=coll_handler, self_coll_ignore=self_coll_ignore_pairs
         )
-        print(">>> [DEBUG] RobotColl initialized successfully!")
         self.object = GraspableObject(self.optimizer)
-        print(">>> [DEBUG] GraspableObject created successfully!")
+
+        # the self collision matrix is incorrect??
         self.max_motion_keyframes = max_motion_keyframes
+
+        # These TCP points are defined in `data/yumi_descriptions/yumi.urdf`.
         left_joint_name, right_joint_name = "left_dummy_joint", "right_dummy_joint"
         self.left_joint_idx = self.kin.joint_names.index(left_joint_name)
         self.right_joint_idx = self.kin.joint_names.index(right_joint_name)
@@ -186,14 +101,15 @@ class PartMotionPlanner:
         timesteps = jnp.arange(len_traj, step=motion_subsample_rate)
 
         for part_idx, joint_idx, grasp_idx in self._get_start_cand_single(T_obj_world):
-            print(f">>> [DEBUG] 开始处理 Part: {part_idx}, Joint: {joint_idx}, Num Grasps: {len(grasp_idx)}") 
-            logger.info( f"Trying part {part_idx}, joint {joint_idx}, with {len(grasp_idx)} trajectories." )
             logger.info(
                 f"Trying part {part_idx}, joint {joint_idx}, with {len(grasp_idx)} trajectories."
             )
             Ts_grasp_world = self.object.get_T_grasps_world(
                 part_idx, timesteps, T_obj_world
             ).wxyz_xyz[grasp_idx, None, :, :]
+            logger.debug(f"Ts_grasp_world shape: {Ts_grasp_world.shape}")
+            logger.debug(f"Ts_grasp_world[0, 0, 0]: {Ts_grasp_world[0, 0, 0]}")  # 第一条轨迹第一个ee第一帧
+            logger.debug(f"Ts_grasp_world[0, 0, 25]: {Ts_grasp_world[0, 0, 25]}")  # 第25帧
             traj, succ = mp_yumi_vmap(
                 self.kin,
                 jnp.array([joint_idx]),
@@ -231,8 +147,6 @@ class PartMotionPlanner:
             joint_idx_1,
             grasp_idx,
         ) in self._get_start_cand_bimanual(T_obj_world):
-            print(f">>> [DEBUG] 开始处理 Bimanual Pair: ({part_idx_0}, {part_idx_1}), Joints: ({joint_idx_0}, {joint_idx_1})") 
-            logger.info( f"Trying part {part_idx_0}, {part_idx_1}, joint {joint_idx_0}, {joint_idx_1}, with {len(grasp_idx)} trajectories." )
             logger.info(
                 f"Trying part {part_idx_0}, {part_idx_1}, joint {joint_idx_0}, {joint_idx_1}, with {len(grasp_idx)} trajectories."
             )
@@ -276,17 +190,13 @@ class PartMotionPlanner:
         """
         Find a list of collision-free IK solutions to reach the object.
         """
-        print(">>> [DEBUG] 正在进入 _get_start_cand_single...") 
         part_indices = self.object.rank_parts_to_move_single()
-        print(f">>> [DEBUG] 待处理部件总数 (part_indices): {len(part_indices)}")
+
         for part_idx in part_indices:
-            print(f">>> [DEBUG] 正在处理 Part: {part_idx}") 
             for joint_idx in [self.left_joint_idx, self.right_joint_idx]:
-                print(f">>> [DEBUG] >>> 正在为 Joint: {joint_idx} 寻找无碰撞抓取点...") 
                 succ_grasp_idx = self._get_coll_free_grasp_indices(
                     part_idx, joint_idx, T_obj_world
                 )
-                print(f">>> [DEBUG] >>> 完成! 找到 {len(succ_grasp_idx)} 个有效抓取点.") 
                 yield (part_idx, joint_idx, succ_grasp_idx)
 
     def _get_start_cand_bimanual(self, T_obj_world: jaxlie.SE3):
@@ -327,22 +237,81 @@ class PartMotionPlanner:
                     succ_grasp_idx,
                 )
 
+    # def _get_coll_free_grasp_indices(
+    #     self, part_index: int, joint_idx: int, T_obj_world: jaxlie.SE3
+    # ) -> jax.Array:
+    #     """
+    #     Get collision-free initial (t=0) grasp indices (between the robot and the object).
+    #     """
+    #     T_grasp_world = self.object.get_T_grasps_world(
+    #         part_index, jnp.array([0]), T_obj_world
+    #     )
+    #     JointVar = RobotFactors.get_var_class(self.kin, jnp.array(YUMI_REST_POSE))
+    #     ik_weight = jnp.array([5.0] * 3 + [1.0] * 3)
+    #     _, joints = solve_ik_vmap(
+    #         self.kin,
+    #         T_grasp_world,
+    #         jnp.array([joint_idx]),
+    #         jnp.array(YUMI_REST_POSE),
+    #         JointVar,
+    #         ik_weight,
+    #     )
+
+    #     # Check that the IK actually goes to the correct place.
+    #     in_position = jnp.isclose(
+    #         jaxlie.SE3(
+    #             self.kin.forward_kinematics(joints)[..., joint_idx, :]
+    #         ).translation(),
+    #         T_grasp_world.translation().squeeze(),
+    #         atol=0.01,
+    #     ).all(axis=-1)
+
+    #     # Collision check.
+    #     robot_coll = self.robot_coll.at_joints(self.kin, joints)
+    #     Ts_part_world = self.object.get_T_part_world(jnp.array(0), T_obj_world)
+    #     part_coll = [
+    #         Convex.from_mesh(self.object.parts[idx].mesh.convex_hull).transform(
+    #             Ts_part_world[idx]
+    #         )
+    #         for idx in range(len(self.object.parts))
+    #     ]
+
+    #     coll_dist = jnp.zeros((*joints.shape[:-1], len(robot_coll), len(part_coll)))
+    #     for i in range(len(robot_coll)):
+    #         for j in range(len(part_coll)):
+    #             dist = collide(robot_coll[i], part_coll[j]).dist
+    #             coll_dist = coll_dist.at[..., i, j].set(dist)
+
+    #     coll_dist = coll_dist.min(axis=-1)  # [num_joints, num_robot_links]
+
+    #     # Make the collision check more lax for gripper ends.
+    #     in_collision_non_fingers = jnp.any(
+    #         coll_dist[..., ~self.ee_indices] < -0.0, axis=-1
+    #     )
+    #     in_collision_fingers = jnp.any(coll_dist[..., self.ee_indices] < -0.0, axis=-1)
+    #     in_collision = in_collision_non_fingers | in_collision_fingers
+
+    #     mask = ~in_collision & in_position
+    #     succ_grasp_idx = jnp.where(mask)[0]
+
+    #     return succ_grasp_idx
+
     def _get_coll_free_grasp_indices(
         self, part_index: int, joint_idx: int, T_obj_world: jaxlie.SE3
     ) -> jax.Array:
-        """
-        Get collision-free initial (t=0) grasp indices (between the robot and the object).
-        """
         T_grasp_world = self.object.get_T_grasps_world(
             part_index, jnp.array([0]), T_obj_world
         )
+        JointVar = RobotFactors.get_var_class(self.kin, jnp.array(YUMI_REST_POSE))
+        ik_weight = jnp.array([5.0] * 3 + [1.0] * 3)
+
         _, joints = solve_ik_vmap(
             self.kin,
             T_grasp_world,
             jnp.array([joint_idx]),
             jnp.array(YUMI_REST_POSE),
-            self.JointVar,      # 补上关节变量类型
-            self.ik_weight,     # 补上IK权重
+            JointVar,
+            ik_weight,
         )
 
         # Check that the IK actually goes to the correct place.
@@ -354,8 +323,12 @@ class PartMotionPlanner:
             atol=0.01,
         ).all(axis=-1)
 
-        # Collision check.
-        robot_coll = self.robot_coll.at_joints(self.kin, joints)
+        # ↓ 加这几行
+        logger.debug(f"  Part {part_index}, joint {joint_idx}: {T_grasp_world.translation().shape[0]} grasps total")
+        logger.debug(f"  IK in_position: {in_position.sum()} / {len(in_position)}")
+
+
+        # Collision check: robot vs object parts.
         Ts_part_world = self.object.get_T_part_world(jnp.array(0), T_obj_world)
         part_coll = [
             Convex.from_mesh(self.object.parts[idx].mesh.convex_hull).transform(
@@ -364,42 +337,51 @@ class PartMotionPlanner:
             for idx in range(len(self.object.parts))
         ]
 
-        coll_dist = jnp.zeros((*joints.shape[:-1], len(robot_coll), len(part_coll)))
-        for i in range(len(robot_coll)):
-            for j in range(len(part_coll)):
-                dist = collide(robot_coll[i], part_coll[j]).dist
-                coll_dist = coll_dist.at[..., i, j].set(dist)
+        # Use batched CollGeom: robot_coll shape is (*batch, num_links)
+        robot_coll = self.robot_coll.at_joints(self.kin, joints)
+        assert isinstance(robot_coll, CollGeom)
+        num_links = self.robot_coll.num_colls
 
-        coll_dist = coll_dist.min(axis=-1)  # [num_joints, num_robot_links]
+        coll_dist = jnp.full((*joints.shape[:-1], num_links, len(part_coll)), jnp.inf)
+        for j, pc in enumerate(part_coll):
+            dist = collide(robot_coll, pc).dist  # (*batch, num_links) (480, 21)
+            logger.debug(f"  collide dist shape: {dist.shape}, min: {dist.min():.4f}, max: {dist.max():.4f}")
+            # break 
+            coll_dist = coll_dist.at[..., j].set(dist) # 写入 (480, 21, j)
 
-        # Make the collision check more lax for gripper ends.
+        coll_dist = coll_dist.min(axis=-1)  # (*batch, num_links) 在 part_coll 维度上取 min → (480, 21)
+
         in_collision_non_fingers = jnp.any(
-            coll_dist[..., ~self.ee_indices] < -0.0, axis=-1
+            coll_dist[..., ~self.ee_indices] < -0.05, axis=-1
         )
-        in_collision_fingers = jnp.any(coll_dist[..., self.ee_indices] < -0.0, axis=-1)
+        in_collision_fingers = jnp.any(coll_dist[..., self.ee_indices] < -0.05, axis=-1)
         in_collision = in_collision_non_fingers | in_collision_fingers
 
-        mask = ~in_collision & in_position
-        succ_grasp_idx = jnp.where(mask)[0]
+        logger.debug(f"  in_collision: {in_collision.sum()} / {len(in_collision)}")
+        logger.debug(f"  final valid: {(~in_collision & in_position).sum()}")
 
-        return succ_grasp_idx
+        mask = ~in_collision & in_position
+        return jnp.where(mask)[0]
+
 
     def get_self_coll(self, joints: jnp.ndarray) -> jnp.ndarray:
         """
         Get self-collision distances for the robot.
         """
-        robot_coll = self.robot_coll.at_joints(self.kin, joints)
-        assert isinstance(robot_coll, list)
+        # robot_coll = self.robot_coll.at_joints(self.kin, joints)
+        # assert isinstance(robot_coll, list)
 
-        coll_dist = jnp.zeros((*joints.shape[:-1], len(robot_coll), len(robot_coll)))
-        for i in range(len(robot_coll)):
-            for j in range(len(robot_coll)):
-                dist = collide(robot_coll[i], robot_coll[j]).dist
-                coll_dist = coll_dist.at[..., i, j].set(dist)
+        # coll_dist = jnp.zeros((*joints.shape[:-1], len(robot_coll), len(robot_coll)))
+        # for i in range(len(robot_coll)):
+        #     for j in range(len(robot_coll)):
+        #         dist = collide(robot_coll[i], robot_coll[j]).dist
+        #         coll_dist = coll_dist.at[..., i, j].set(dist)
 
-        return jnp.any(
-            coll_dist * self.robot_coll.self_coll_matrix < 0.0, axis=(-1, -2)
-        )
+        # return jnp.any(
+        #     coll_dist * self.robot_coll.self_coll_mat < 0.0, axis=(-1, -2)
+        # )
+        dist = self.robot_coll.self_coll_dist(self.kin, joints)  # (*batch,)
+        return dist < 0.0
 
     def get_approach_motion(
         self, start_joints: jnp.ndarray, approach_dist: float
@@ -416,16 +398,28 @@ class PartMotionPlanner:
 
         joint_idx = jnp.array([self.left_joint_idx, self.right_joint_idx])
         Ts_approach = Ts_approach[joint_idx]
+        JointVar = RobotFactors.get_var_class(self.kin, start_joints)
+        ik_weight = jnp.array([5.0] * 3 + [1.0] * 3)
 
+        # _, joints = solve_ik(
+        #     self.kin,
+        #     jaxlie.SE3(Ts_approach),
+        #     joint_idx,
+        #     start_joints,  # Keep it close to the start-of-traj joints.
+        #     pos_weight=5.0,
+        #     rot_weight=1.0,
+        #     limit_weight=100.0,
+        #     joint_vel_weight=100.0,  # No joint twists.
+        # )
         _, joints = solve_ik(
             self.kin,
             jaxlie.SE3(Ts_approach),
             joint_idx,
-            start_joints,  # Keep it close to the start-of-traj joints.
-            pos_weight=5.0,
-            rot_weight=1.0,
+            start_joints,
+            JointVar,
+            ik_weight,
             limit_weight=100.0,
-            joint_vel_weight=100.0,  # No joint twists.
+            joint_vel_weight=100.0,
         )
 
         traj_rest_approach = jnp.array(YUMI_REST_POSE)[None, :] + jnp.linspace(
